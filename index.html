@@ -339,7 +339,6 @@
         let currentRoomId = null;
         let unsubscribeRoom = null;
         let isPlaying = false;
-        let isHost = false;
 
         const statusText = document.getElementById('status-text');
         const matchBtn = document.getElementById('match-btn');
@@ -365,7 +364,7 @@
 
         /**
          * ==========================================
-         * 3. 匹配與等待室邏輯 (支援 2~3 人彈性開局)
+         * 3. 匹配與等待室邏輯 (無房主制：達到 2 人任何人皆可開戰)
          * ==========================================
          */
         matchBtn.onclick = async () => {
@@ -387,7 +386,6 @@
                     const roomData = doc.data();
                     if (roomData.status === 'waiting' && Object.keys(roomData.players || {}).length < 3) {
                         currentRoomId = doc.id;
-                        isHost = false;
                         await roomsRef.doc(currentRoomId).set({
                             players: {
                                 [currentUser.uid]: {
@@ -403,9 +401,9 @@
                 }
 
                 if (!joined) {
-                    // 創建新房間並成為房主
+                    // 如果沒有空房間，就自己開一間
                     const newRoom = await roomsRef.add({
-                        status: 'waiting', host: currentUser.uid,
+                        status: 'waiting',
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         players: {
                             [currentUser.uid]: {
@@ -416,7 +414,6 @@
                         }
                     });
                     currentRoomId = newRoom.id;
-                    isHost = true;
                 }
                 document.getElementById('wr-id').innerText = currentRoomId.substring(0, 5).toUpperCase();
                 startGameSync(roomsRef.doc(currentRoomId));
@@ -450,19 +447,17 @@
                         wrPlayers.appendChild(div);
                     });
 
+                    // 核心修改：沒有房主限制，只要 >= 2 人，所有人都會看到開始按鈕
                     if (pCount >= 2) {
-                        if (isHost) {
-                            startGameBtn.style.display = 'block';
-                            statusText.innerText = pCount === 3 ? "房間已滿，請點擊開始遊戲！" : "已有 2 人，可隨時開戰或等待第 3 人！";
-                        } else {
-                            statusText.innerText = "人數已達標，等待房主開始遊戲...";
-                        }
+                        startGameBtn.style.display = 'block';
+                        statusText.innerText = pCount === 3 ? "房間已滿，可直接開戰！" : "已有 2 人，任何人皆可開始遊戲！";
                     } else {
                         statusText.innerText = "等待其他玩家加入... (目前 1 人)";
                         startGameBtn.style.display = 'none';
                     }
                 }
 
+                // 一旦有人按下開始按鈕 (status 變為 playing)，全員強制進入遊戲
                 if (data.status === 'playing' && !isPlaying) {
                     enterGameMode();
                 }
@@ -481,12 +476,12 @@
                 console.warn("Snapshot Error:", error);
             });
 
-            // 房主點擊開始
+            // 任何人點擊開始，直接將房間狀態設為 playing
             startGameBtn.onclick = () => {
                 roomDocRef.update({ status: 'playing' }).catch(e => console.error("開始遊戲錯誤:", e));
             };
 
-            // 位置同步 (加入 catch 防止未捕獲的網路或關閉時期的錯誤)
+            // 位置同步
             syncInterval = setInterval(() => {
                 if (isPlaying && (localPlayer.vx !== 0 || localPlayer.vy !== 0)) {
                     roomDocRef.set({
@@ -576,7 +571,6 @@
             const myCls = CLASSES[selectedClassId];
             const roomDocRef = db.collection('artifacts').doc(appIdStr).collection('public').doc('data').collection('rooms').doc(currentRoomId);
             
-            // 加入 catch 防護
             roomDocRef.set({ players: { [currentUser.uid]: { action: actionName, actionTime: Date.now() } } }, { merge: true }).catch(e => console.warn(e));
 
             let actRange = myCls.range; let actDmg = myCls.baseDmg;
