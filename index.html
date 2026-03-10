@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>諸神愚戲 - 72職階競技場</title>
+    <!-- 引入 Firebase SDK (v10 相容模式) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <style>
+        :root {
+            --ui-bg: rgba(15, 20, 30, 0.9);
+            --neon-border: #0ff;
+        }
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #050510; color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+        }
+        #gameCanvas {
+            display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1;
+        }
+        
+        /* UI 層 */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none;
+        }
+        
+        /* 登入/選角大廳 */
+        #lobby {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(5,5,15,0.95); display: flex; flex-direction: column;
+            align-items: center; justify-content: flex-start; z-index: 100; pointer-events: auto;
+            padding-top: 20px; box-sizing: border-box;
+        }
+        h1 { color: #0ff; text-shadow: 0 0 15px #0ff; margin-bottom: 5px; font-size: 2.2rem;}
+        .subtitle { color: #aaa; margin-bottom: 15px; font-size: 1rem; }
+        
+        /* 篩選器 */
+        #filters {
+            display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center;
+            max-width: 90%;
+        }
+        .filter-btn {
+            background: #223; color: #fff; border: 1px solid #556; padding: 8px 15px;
+            border-radius: 20px; cursor: pointer; transition: 0.2s; font-size: 0.9rem;
+        }
+        .filter-btn.active { background: #0ff; color: #000; border-color: #0ff; font-weight: bold; box-shadow: 0 0 10px #0ff;}
+
+        /* 職業列表 */
+        #class-selection {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; 
+            width: 90%; max-width: 900px; max-height: 45vh; overflow-y: auto; padding: 10px;
+            background: rgba(0,0,0,0.5); border-radius: 10px; border: 1px solid #334;
+        }
+        #class-selection::-webkit-scrollbar { width: 8px; }
+        #class-selection::-webkit-scrollbar-track { background: #111; border-radius: 4px; }
+        #class-selection::-webkit-scrollbar-thumb { background: #0ff; border-radius: 4px; }
+
+        .class-card {
+            background: #1a1a2e; border: 2px solid #333; border-radius: 8px; padding: 10px 5px;
+            text-align: center; cursor: pointer; transition: 0.2s; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+        }
+        .class-card:hover { border-color: #555; background: #2a2a4e; }
+        .class-card.selected { border-color: #0ff; box-shadow: 0 0 15px #0ff; transform: scale(1.05); background: #224;}
+        .path-tag { font-size: 0.7em; padding: 3px 6px; border-radius: 4px; margin-bottom: 5px; white-space: nowrap; font-weight:bold;}
+        .class-name { font-size: 1.05em; font-weight: bold; margin: 5px 0; color: #fff;}
+        .class-type { font-size: 0.75em; color: #aaa; }
+        
+        #action-area {
+            margin-top: 15px; display: flex; flex-direction: column; align-items: center; width: 100%;
+        }
+
+        /* 等待室 UI */
+        #waiting-room {
+            display: none; flex-direction: column; align-items: center; 
+            background: rgba(0,0,0,0.8); border: 1px solid #0ff; border-radius: 10px;
+            padding: 20px; width: 90%; max-width: 400px; box-shadow: 0 0 20px rgba(0,255,255,0.2);
+            margin-top: 10px;
+        }
+        .player-slot {
+            background: #112; border: 1px solid #334; padding: 10px; margin: 5px 0;
+            width: 100%; border-radius: 5px; text-align: center; color: #0ff; font-weight: bold;
+        }
+
+        button.action-btn {
+            background: transparent; color: #0ff; border: 2px solid #0ff; padding: 12px 40px;
+            font-size: 1.2rem; border-radius: 30px; cursor: pointer; text-transform: uppercase;
+            font-weight: bold; box-shadow: 0 0 15px rgba(0, 255, 255, 0.4); transition: 0.2s; margin-top: 10px;
+        }
+        button.action-btn:hover { background: #0ff; color: #000; box-shadow: 0 0 25px #0ff;}
+        button.action-btn:disabled { border-color: #444; color: #555; box-shadow: none; cursor: not-allowed; background: transparent;}
+        
+        #btn-start-game { border-color: #0f0; color: #0f0; box-shadow: 0 0 15px rgba(0, 255, 0, 0.4); }
+        #btn-start-game:hover { background: #0f0; color: #000; box-shadow: 0 0 25px #0f0; }
+
+        #status-text { margin-top: 10px; color: #ffeb3b; font-size: 1rem; height: 1.5em; text-align: center;}
+
+        /* 遊戲內控制介面 */
+        #controls { position: absolute; bottom: 0; left: 0; width: 100%; height: 50%; display: none; pointer-events: none; }
+        
+        /* 搖桿 */
+        #joystick-area {
+            position: absolute; bottom: 30px; left: 30px; width: 140px; height: 140px;
+            background: rgba(255, 255, 255, 0.05); border-radius: 50%; pointer-events: auto;
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+        }
+        #joystick-knob {
+            position: absolute; top: 45px; left: 45px; width: 50px; height: 50px;
+            background: radial-gradient(circle, rgba(0,255,255,0.8) 0%, rgba(0,150,255,0.5) 100%); 
+            border-radius: 50%; transform: translate(0px, 0px); box-shadow: 0 0 15px #0ff;
+        }
+
+        /* 技能按鍵 */
+        #skill-buttons {
+            position: absolute; bottom: 20px; right: 20px; width: 260px; height: 240px;
+            pointer-events: auto;
+        }
+        .skill-btn {
+            position: absolute; border-radius: 50%; background: rgba(10, 15, 25, 0.7);
+            border: 2px solid #fff; color: white; font-weight: bold; text-align: center;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            user-select: none; font-size: 0.8rem; padding: 5px; box-sizing: border-box;
+            box-shadow: inset 0 0 10px rgba(255,255,255,0.2), 0 0 10px rgba(0,0,0,0.5);
+        }
+        .skill-btn span { font-size: 0.6em; color:#aaa; margin-bottom: 2px;}
+        .skill-btn:active { background: rgba(255, 255, 255, 0.3); transform: scale(0.95);}
+        .cooldown-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.75); border-radius: 50%; display: none;
+            justify-content: center; align-items: center; color: #ff3b3b; font-size: 1.5em; font-weight: bold;
+        }
+        
+        #btn-atk { bottom: 10px; right: 10px; width: 85px; height: 85px; border-color: #ff3b3b; font-size: 0.9rem; box-shadow: 0 0 15px rgba(255,59,59,0.3);}
+        #btn-s1 { bottom: 110px; right: 25px; width: 65px; height: 65px; border-color: #0ff; }
+        #btn-s2 { bottom: 80px; right: 105px; width: 65px; height: 65px; border-color: #0ff; }
+        #btn-s3 { bottom: 15px; right: 140px; width: 65px; height: 65px; border-color: #ff00ff; box-shadow: 0 0 15px rgba(255,0,255,0.3);}
+
+        #top-bar {
+            position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+            background: var(--ui-bg); padding: 8px 20px; border-radius: 20px; border: 1px solid var(--neon-border);
+            text-align: center; display: none; box-shadow: 0 0 15px rgba(0,255,255,0.2);
+            font-weight: bold; letter-spacing: 1px; font-size: 0.9rem;
+        }
+        
+        #kill-feed { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
+        .kill-msg { background: rgba(255,0,0,0.6); color: white; padding: 5px 15px; border-radius: 5px; margin-bottom: 5px; animation: fadeOut 3s forwards; }
+        @keyframes fadeOut { 0%{opacity:1;} 70%{opacity:1;} 100%{opacity:0;} }
+
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div id="top-bar">房號: <span id="room-id-display">--</span> | 存活: <span id="alive-count">-</span></div>
+        <div id="kill-feed"></div>
+        
+        <div id="controls">
+            <div id="joystick-area"><div id="joystick-knob"></div></div>
+            <div id="skill-buttons">
+                <div class="skill-btn" id="btn-s3"><span>終極</span><div id="txt-s3">技3</div><div class="cooldown-overlay" id="cd-s3"></div></div>
+                <div class="skill-btn" id="btn-s2"><span>輔助</span><div id="txt-s2">技2</div><div class="cooldown-overlay" id="cd-s2"></div></div>
+                <div class="skill-btn" id="btn-s1"><span>特技</span><div id="txt-s1">技1</div><div class="cooldown-overlay" id="cd-s1"></div></div>
+                <div class="skill-btn" id="btn-atk"><span>普攻</span><div id="txt-atk">攻擊</div><div class="cooldown-overlay" id="cd-atk"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="lobby">
+        <h1>諸神愚戲 · 競技場</h1>
+        <div class="subtitle">選擇你的命途 (2~3 人對戰)</div>
+        
+        <div id="filters">
+            <button class="filter-btn active" data-filter="all">全部</button>
+            <button class="filter-btn" data-filter="t_0">戰士</button>
+            <button class="filter-btn" data-filter="t_1">法師</button>
+            <button class="filter-btn" data-filter="t_2">刺客</button>
+            <button class="filter-btn" data-filter="t_3">獵人</button>
+        </div>
+
+        <div id="class-selection">
+            <!-- 72個職業動態生成 -->
+        </div>
+
+        <div id="action-area">
+            <button class="action-btn" id="match-btn" disabled>尋找房間</button>
+            
+            <!-- 等待室介面 -->
+            <div id="waiting-room">
+                <h2 style="margin-top:0; color:#0ff;">房間 <span id="wr-id">---</span></h2>
+                <div id="wr-players" style="width:100%;"></div>
+                <div id="status-text">連線中...</div>
+                <button id="btn-start-game" class="action-btn" style="display:none;">開始遊戲</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 全域錯誤捕捉機制：防止因瀏覽器/預覽環境中 IndexedDB 被重置導致的「Database deleted」未捕獲異常
+         */
+        window.addEventListener('unhandledrejection', function(event) {
+            if (event.reason && event.reason.name === 'UnknownError' && event.reason.message.includes('Database deleted by request of the user')) {
+                event.preventDefault(); 
+                console.warn('已忽略預期的 Firebase IndexedDB 錯誤:', event.reason);
+            }
+        });
+
+        /**
+         * ==========================================
+         * 1. 72 職業矩陣資料生成 (僅保留 戰、法、刺、獵)
+         * ==========================================
+         */
+        const PATHS = [
+            { name: "生命", god: "誕育", color: "#4CAF50" }, { name: "沉淪", god: "汙墮", color: "#9C27B0" },
+            { name: "文明", god: "秩序", color: "#2196F3" }, { name: "混沌", god: "痴愚", color: "#F44336" },
+            { name: "存在", god: "時間", color: "#FFEB3B" }, { name: "虛無", god: "命運", color: "#9E9E9E" },
+            { name: "豐饒", god: "繁衍", color: "#8BC34A" }, { name: "死亡", god: "枯寂", color: "#607D8B" },
+            { name: "野蠻", god: "鬥爭", color: "#FF9800" }, { name: "規則", god: "契約", color: "#03A9F4" },
+            { name: "真理", god: "知識", color: "#00BCD4" }, { name: "謬誤", god: "謊言", color: "#E91E63" },
+            { name: "守護", god: "堅壁", color: "#795548" }, { name: "毀滅", god: "破壞", color: "#FF5722" },
+            { name: "救贖", god: "憐憫", color: "#CDDC39" }, { name: "災厄", god: "苦痛", color: "#673AB7" },
+            { name: "夢境", god: "幻象", color: "#3F51B5" }, { name: "現實", god: "物質", color: "#FFC107" }
+        ];
+
+        const TYPES = [
+            { name: "戰士", hp: 160, speed: 4.5, range: 80,  dmg: 15, s1:"衝鋒", s2:"震擊", atk:"重斬" },
+            { name: "法師", hp: 90,  speed: 3.8, range: 250, dmg: 22, s1:"靈彈", s2:"爆裂", atk:"法球" },
+            { name: "刺客", hp: 100, speed: 6.0, range: 70,  dmg: 18, s1:"突刺", s2:"隱匿", atk:"背刺" },
+            { name: "獵人", hp: 110, speed: 4.8, range: 300, dmg: 16, s1:"狙擊", s2:"陷阱", atk:"射擊" }
+        ];
+
+        const CLASS_MATRIX = [
+            ["酋長", "鮮血巫師", "處刑人", "捕獸人"],
+            ["狂信徒", "欲望主宰", "魅影", "追跡者"],
+            ["騎士", "奧術師", "行刑官", "巡林客"],
+            ["畸變體", "虛空術士", "影魔", "獵愚人"],
+            ["時空衛士", "塑能師", "歲月神偷", "時光獵手"],
+            ["湮滅武士", "預言家", "幽影", "虛空行者"],
+            ["德魯伊", "孢子法師", "寄生者", "蟲群領主"],
+            ["死亡騎士", "死靈法師", "刺客", "賞金獵人"],
+            ["鬥士", "元素使", "狂戰士", "狩獵者"],
+            ["審判官", "言靈師", "契約刺客", "執法者"],
+            ["秘法騎士", "學者", "竊密者", "尋星者"],
+            ["欺詐者", "幻術師", "變色龍", "陷阱大師"],
+            ["盾衛", "結界師", "守夜人", "守林人"],
+            ["破壞者", "爆破專家", "影武者", "追獵者"],
+            ["聖堂武士", "祈求者", "贖罪者", "救援者"],
+            ["災禍騎士", "瘟疫法師", "毒師", "災厄獵手"],
+            ["夢魘騎士", "織夢者", "夢遊者", "捕夢網"],
+            ["鍊金戰士", "鍊金術士", "尋寶人", "寶藏獵人"]
+        ];
+
+        const CLASSES = {}; 
+        for (let p = 0; p < PATHS.length; p++) {
+            for (let t = 0; t < TYPES.length; t++) {
+                let id = `c_${p}_${t}`;
+                let path = PATHS[p]; let type = TYPES[t]; let className = CLASS_MATRIX[p][t];
+                CLASSES[id] = {
+                    id: id, path: path.name, god: path.god, name: className, type: type.name,
+                    color: path.color, hp: type.hp, maxHp: type.hp, speed: type.speed, range: type.range, baseDmg: type.dmg,
+                    skills: { atk: type.atk, s1: `${path.name}·${type.s1}`, s2: `${path.god}·${type.s2}`, s3: `${className}·絕學` },
+                    typeIndex: t 
+                };
+            }
+        }
+
+        let selectedClassId = null;
+
+        const classContainer = document.getElementById('class-selection');
+        function renderClasses(filterType = "all") {
+            classContainer.innerHTML = "";
+            Object.values(CLASSES).forEach(cls => {
+                if (filterType !== "all" && `t_${cls.typeIndex}` !== filterType) return;
+                const card = document.createElement('div');
+                card.className = 'class-card'; card.id = `card-${cls.id}`;
+                card.innerHTML = `
+                    <div class="path-tag" style="background:${cls.color}30; color:${cls.color}; border: 1px solid ${cls.color}80;">${cls.path} · ${cls.god}</div>
+                    <div class="class-name">${cls.name}</div>
+                    <div class="class-type">${cls.type} (HP:${cls.hp})</div>
+                `;
+                card.onclick = () => {
+                    document.querySelectorAll('.class-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected'); selectedClassId = cls.id;
+                    document.getElementById('match-btn').disabled = false;
+                    document.getElementById('status-text').innerText = `已鎖定：【${cls.name}】，可尋找房間。`;
+                };
+                classContainer.appendChild(card);
+            });
+            if(selectedClassId && document.getElementById(`card-${selectedClassId}`)) {
+                document.getElementById(`card-${selectedClassId}`).classList.add('selected');
+            }
+        }
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active'); renderClasses(e.target.dataset.filter);
+            }
+        });
+        renderClasses();
+
+        /**
+         * ==========================================
+         * 2. 使用者的 Firebase 設定載入
+         * ==========================================
+         */
+        let firebaseConfig = {
+            apiKey: "AIzaSyDFhHbkIGkqPAmXRW2vQ0s-H33qVO2cCKg",
+            authDomain: "money-5ff30.firebaseapp.com",
+            projectId: "money-5ff30",
+            storageBucket: "money-5ff30.firebasestorage.app",
+            messagingSenderId: "392383048631",
+            appId: "1:392383048631:web:ceff00d5e93e2ebc6e5632",
+            measurementId: "G-RWXNKP0H6D"
+        };
+        if (typeof __firebase_config !== 'undefined') { firebaseConfig = JSON.parse(__firebase_config); }
+        
+        const appIdStr = typeof __app_id !== 'undefined' ? __app_id : 'money-5ff30';
+        
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // 嘗試關閉預設的快取，避免 IndexedDB 衝突
+        try {
+            db.settings({
+                cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
+            });
+        } catch (e) {
+            console.warn("Firestore 設定變更失敗:", e);
+        }
+
+        let currentUser = null;
+        let currentRoomId = null;
+        let unsubscribeRoom = null;
+        let isPlaying = false;
+        let isHost = false;
+
+        const statusText = document.getElementById('status-text');
+        const matchBtn = document.getElementById('match-btn');
+        const startGameBtn = document.getElementById('btn-start-game');
+
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await auth.signInWithCustomToken(__initial_auth_token);
+                } else {
+                    await auth.signInAnonymously();
+                }
+            } catch (error) {
+                console.error("Auth Error:", error);
+                statusText.innerText = "連線伺服器失敗，請確認 Firebase 設定。";
+            }
+        }
+
+        auth.onAuthStateChanged(user => {
+            if (user) { currentUser = user; statusText.innerText = selectedClassId ? "準備就緒" : "請選擇職業"; }
+        });
+        initAuth();
+
+        /**
+         * ==========================================
+         * 3. 匹配與等待室邏輯 (支援 2~3 人彈性開局)
+         * ==========================================
+         */
+        matchBtn.onclick = async () => {
+            if (!currentUser || !selectedClassId) return;
+            matchBtn.style.display = 'none';
+            document.getElementById('class-selection').style.display = 'none';
+            document.getElementById('filters').style.display = 'none';
+            document.getElementById('waiting-room').style.display = 'flex';
+            statusText.innerText = "尋找房間中...";
+            
+            const roomsRef = db.collection('artifacts').doc(appIdStr).collection('public').doc('data').collection('rooms');
+            
+            try {
+                const snapshot = await roomsRef.get();
+                let joined = false;
+
+                // 找未滿 3 人的等待中房間
+                for (let doc of snapshot.docs) {
+                    const roomData = doc.data();
+                    if (roomData.status === 'waiting' && Object.keys(roomData.players || {}).length < 3) {
+                        currentRoomId = doc.id;
+                        isHost = false;
+                        await roomsRef.doc(currentRoomId).set({
+                            players: {
+                                [currentUser.uid]: {
+                                    x: Math.random() * 600 + 100, y: Math.random() * 400 + 100,
+                                    classId: selectedClassId, hp: CLASSES[selectedClassId].hp, 
+                                    action: null, lastUpdate: Date.now()
+                                }
+                            }
+                        }, { merge: true });
+                        joined = true;
+                        break;
+                    }
+                }
+
+                if (!joined) {
+                    // 創建新房間並成為房主
+                    const newRoom = await roomsRef.add({
+                        status: 'waiting', host: currentUser.uid,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        players: {
+                            [currentUser.uid]: {
+                                x: 500, y: 400,
+                                classId: selectedClassId, hp: CLASSES[selectedClassId].hp, 
+                                action: null, lastUpdate: Date.now()
+                            }
+                        }
+                    });
+                    currentRoomId = newRoom.id;
+                    isHost = true;
+                }
+                document.getElementById('wr-id').innerText = currentRoomId.substring(0, 5).toUpperCase();
+                startGameSync(roomsRef.doc(currentRoomId));
+
+            } catch (error) {
+                console.error("Matchmaking error:", error);
+                statusText.innerText = "網路異常，請重試。";
+                matchBtn.style.display = 'block';
+            }
+        };
+
+        function startGameSync(roomDocRef) {
+            document.getElementById('room-id-display').innerText = currentRoomId.substring(0, 5).toUpperCase();
+            
+            unsubscribeRoom = roomDocRef.onSnapshot(doc => {
+                if (!doc.exists) return;
+                const data = doc.data();
+                playersData = data.players || {};
+                const pKeys = Object.keys(playersData);
+                const pCount = pKeys.length;
+
+                // 更新等待室 UI
+                if (data.status === 'waiting' && !isPlaying) {
+                    const wrPlayers = document.getElementById('wr-players');
+                    wrPlayers.innerHTML = '';
+                    pKeys.forEach((uid, idx) => {
+                        const cls = CLASSES[playersData[uid].classId];
+                        const div = document.createElement('div');
+                        div.className = 'player-slot';
+                        div.innerText = `P${idx+1} : ${cls.name} (${cls.type})`;
+                        wrPlayers.appendChild(div);
+                    });
+
+                    if (pCount >= 2) {
+                        if (isHost) {
+                            startGameBtn.style.display = 'block';
+                            statusText.innerText = pCount === 3 ? "房間已滿，請點擊開始遊戲！" : "已有 2 人，可隨時開戰或等待第 3 人！";
+                        } else {
+                            statusText.innerText = "人數已達標，等待房主開始遊戲...";
+                        }
+                    } else {
+                        statusText.innerText = "等待其他玩家加入... (目前 1 人)";
+                        startGameBtn.style.display = 'none';
+                    }
+                }
+
+                if (data.status === 'playing' && !isPlaying) {
+                    enterGameMode();
+                }
+
+                // 遊戲中狀態更新
+                if (isPlaying) {
+                    let aliveCount = 0;
+                    Object.values(playersData).forEach(p => { if(p.hp > 0) aliveCount++; });
+                    document.getElementById('alive-count').innerText = aliveCount;
+
+                    if (playersData[currentUser.uid] && playersData[currentUser.uid].hp <= 0) {
+                        alert("你已被擊敗！命途就此終結。"); window.location.reload();
+                    }
+                }
+            }, error => {
+                console.warn("Snapshot Error:", error);
+            });
+
+            // 房主點擊開始
+            startGameBtn.onclick = () => {
+                roomDocRef.update({ status: 'playing' }).catch(e => console.error("開始遊戲錯誤:", e));
+            };
+
+            // 位置同步 (加入 catch 防止未捕獲的網路或關閉時期的錯誤)
+            syncInterval = setInterval(() => {
+                if (isPlaying && (localPlayer.vx !== 0 || localPlayer.vy !== 0)) {
+                    roomDocRef.set({
+                        players: { [currentUser.uid]: { x: localPlayer.x, y: localPlayer.y, lastUpdate: Date.now() } }
+                    }, { merge: true }).catch(e => console.warn('同步位置失敗:', e));
+                }
+            }, 100);
+        }
+
+        /**
+         * ==========================================
+         * 4. 遊戲核心與操控
+         * ==========================================
+         */
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+        let localPlayer = { x: 500, y: 400, vx: 0, vy: 0 }; 
+
+        function resize() {
+            width = window.innerWidth; height = window.innerHeight;
+            canvas.width = width; canvas.height = height;
+        }
+        window.addEventListener('resize', resize); resize();
+
+        function enterGameMode() {
+            isPlaying = true;
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('controls').style.display = 'block';
+            document.getElementById('top-bar').style.display = 'block';
+            
+            if (playersData[currentUser.uid]) {
+                localPlayer.x = playersData[currentUser.uid].x; localPlayer.y = playersData[currentUser.uid].y;
+            }
+
+            const myCls = CLASSES[selectedClassId];
+            document.getElementById('txt-atk').innerText = myCls.skills.atk;
+            document.getElementById('txt-s1').innerText = myCls.skills.s1;
+            document.getElementById('txt-s2').innerText = myCls.skills.s2;
+            document.getElementById('txt-s3').innerText = myCls.skills.s3;
+            document.getElementById('btn-s1').style.borderColor = myCls.color;
+            document.getElementById('btn-s2').style.borderColor = myCls.color;
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 搖桿系統
+        const joystickArea = document.getElementById('joystick-area');
+        const joystickKnob = document.getElementById('joystick-knob');
+        let joyTouchId = null; let joyVector = { x: 0, y: 0 }; 
+
+        function updateJoystick(e) {
+            e.preventDefault();
+            const rect = joystickArea.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2; const centerY = rect.top + rect.height / 2;
+            const maxRadius = rect.width / 2;
+
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const t = e.changedTouches[i];
+                if (t.identifier === joyTouchId) {
+                    let dx = t.clientX - centerX; let dy = t.clientY - centerY;
+                    let distance = Math.sqrt(dx*dx + dy*dy);
+                    if (distance > maxRadius) { dx = (dx / distance) * maxRadius; dy = (dy / distance) * maxRadius; }
+                    joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+                    joyVector.x = dx / maxRadius; joyVector.y = dy / maxRadius;
+                }
+            }
+        }
+        joystickArea.addEventListener('touchstart', (e) => { e.preventDefault(); if (joyTouchId === null) { joyTouchId = e.changedTouches[0].identifier; updateJoystick(e); } });
+        joystickArea.addEventListener('touchmove', updateJoystick);
+        const resetJoystick = (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === joyTouchId) {
+                    joyTouchId = null; joyVector = { x: 0, y: 0 }; joystickKnob.style.transform = `translate(0px, 0px)`;
+                }
+            }
+        };
+        joystickArea.addEventListener('touchend', resetJoystick); joystickArea.addEventListener('touchcancel', resetJoystick);
+
+        // 技能系統
+        const cooldowns = { atk: 0, s1: 0, s2: 0, s3: 0 };
+        const cdTimes = { atk: 600, s1: 4000, s2: 8000, s3: 15000 }; 
+
+        function triggerAction(actionName) {
+            if (cooldowns[actionName] > Date.now()) return; 
+            
+            const myCls = CLASSES[selectedClassId];
+            const roomDocRef = db.collection('artifacts').doc(appIdStr).collection('public').doc('data').collection('rooms').doc(currentRoomId);
+            
+            // 加入 catch 防護
+            roomDocRef.set({ players: { [currentUser.uid]: { action: actionName, actionTime: Date.now() } } }, { merge: true }).catch(e => console.warn(e));
+
+            let actRange = myCls.range; let actDmg = myCls.baseDmg;
+            if(actionName === 's1') { actRange *= 1.2; actDmg *= 1.5; }
+            if(actionName === 's2') { actRange *= 1.5; actDmg *= 2.0; }
+            if(actionName === 's3') { actRange *= 2.0; actDmg *= 3.5; }
+
+            Object.keys(playersData).forEach(uid => {
+                if (uid !== currentUser.uid && playersData[uid].hp > 0) {
+                    let enemy = playersData[uid];
+                    let dx = enemy.x - localPlayer.x; let dy = enemy.y - localPlayer.y;
+                    let dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < actRange) {
+                        let newHp = Math.max(0, enemy.hp - actDmg);
+                        roomDocRef.set({ players: { [uid]: { hp: newHp } } }, { merge: true }).catch(e => console.warn(e));
+                        if(newHp === 0) showKillMsg(`你擊敗了 ${CLASSES[enemy.classId].name}`);
+                    }
+                }
+            });
+
+            cooldowns[actionName] = Date.now() + cdTimes[actionName];
+            updateCooldownUI(actionName);
+        }
+
+        function showKillMsg(msg) {
+            const feed = document.getElementById('kill-feed');
+            const el = document.createElement('div'); el.className = 'kill-msg'; el.innerText = msg;
+            feed.appendChild(el); setTimeout(()=> { if(el.parentNode) el.parentNode.removeChild(el); }, 3000);
+        }
+
+        function updateCooldownUI(btnId) {
+            const cdEl = document.getElementById(`cd-${btnId}`); cdEl.style.display = 'flex';
+            const interval = setInterval(() => {
+                let remaining = ((cooldowns[btnId] - Date.now()) / 1000).toFixed(1);
+                if (remaining <= 0) { cdEl.style.display = 'none'; clearInterval(interval); } 
+                else { cdEl.innerText = remaining > 1 ? Math.ceil(remaining) : remaining; }
+            }, 100);
+        }
+
+        ['atk', 's1', 's2', 's3'].forEach(btn => {
+            document.getElementById(`btn-${btn}`).addEventListener('touchstart', (e) => { e.preventDefault(); triggerAction(btn); });
+            document.getElementById(`btn-${btn}`).addEventListener('mousedown', (e) => { e.preventDefault(); triggerAction(btn); });
+        });
+
+        /**
+         * ==========================================
+         * 5. 渲染迴圈
+         * ==========================================
+         */
+        function drawGrid() {
+            ctx.strokeStyle = '#112'; ctx.lineWidth = 1;
+            for(let i=0; i<width; i+=100) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, height); ctx.stroke(); }
+            for(let i=0; i<height; i+=100) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(width, i); ctx.stroke(); }
+        }
+
+        function gameLoop() {
+            if (!isPlaying) return;
+
+            const myCls = CLASSES[selectedClassId];
+            localPlayer.x += joyVector.x * myCls.speed; localPlayer.y += joyVector.y * myCls.speed;
+            localPlayer.x = Math.max(30, Math.min(width - 30, localPlayer.x));
+            localPlayer.y = Math.max(30, Math.min(height - 30, localPlayer.y));
+
+            ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, width, height); drawGrid();
+
+            Object.keys(playersData).forEach(uid => {
+                const p = playersData[uid];
+                if (!p.classId || p.hp <= 0) return;
+                
+                const clsInfo = CLASSES[p.classId];
+                let drawX = (uid === currentUser.uid) ? localPlayer.x : p.x;
+                let drawY = (uid === currentUser.uid) ? localPlayer.y : p.y;
+
+                if (p.action && Date.now() - p.actionTime < 300) {
+                    let r = clsInfo.range;
+                    if(p.action === 's1') r *= 1.2; if(p.action === 's2') r *= 1.5; if(p.action === 's3') r *= 2.0;
+                    let progress = (Date.now() - p.actionTime) / 300;
+                    ctx.beginPath(); ctx.arc(drawX, drawY, r * Math.easeOutQuad(progress), 0, Math.PI * 2);
+                    if(p.action === 's3') { ctx.fillStyle = `${clsInfo.color}30`; ctx.fill(); }
+                    ctx.strokeStyle = `${clsInfo.color}${Math.floor((1 - progress)*255).toString(16).padStart(2,'0')}`;
+                    ctx.lineWidth = p.action === 'atk' ? 3 : 6; ctx.stroke();
+                }
+
+                ctx.beginPath(); ctx.arc(drawX, drawY, 20, 0, Math.PI * 2);
+                ctx.fillStyle = clsInfo.color; ctx.shadowColor = clsInfo.color;
+                ctx.shadowBlur = (uid === currentUser.uid) ? 20 : 10; ctx.fill(); ctx.shadowBlur = 0;
+
+                const hpRatio = Math.max(0, p.hp / clsInfo.maxHp);
+                ctx.fillStyle = 'rgba(255,0,0,0.7)'; ctx.fillRect(drawX - 25, drawY - 35, 50, 6);
+                ctx.fillStyle = '#0f0'; ctx.fillRect(drawX - 25, drawY - 35, 50 * hpRatio, 6);
+
+                ctx.fillStyle = 'white'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+                ctx.fillText(clsInfo.name, drawX, drawY - 45);
+                ctx.fillStyle = clsInfo.color; ctx.font = '10px Arial';
+                ctx.fillText(clsInfo.path, drawX, drawY - 60);
+            });
+
+            requestAnimationFrame(gameLoop);
+        }
+        Math.easeOutQuad = function (t) { return t * (2 - t); };
+    </script>
+</body>
+</html>
